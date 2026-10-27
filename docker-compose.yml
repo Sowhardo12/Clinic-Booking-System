@@ -1,0 +1,18 @@
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: delta_postgres_baseline
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: delta_diagnostic
+    ports:
+      - "5439:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./src/database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    restart: always
+
+volumes:
+  pgdata:
