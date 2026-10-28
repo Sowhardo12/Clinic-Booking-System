@@ -1,5 +1,5 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { Pool, QueryResult, QueryResultRow } from 'pg';
+import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 
 @Injectable()
 export class DatabaseService implements OnModuleInit, OnModuleDestroy {
@@ -25,5 +25,9 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
 
   async query<T extends QueryResultRow = any>(text: string, params?: any[]): Promise<QueryResult<T>> {
     return this.pool.query<T>(text, params);
+  }
+
+  async getClient(): Promise<PoolClient> {
+    return this.pool.connect();
   }
 }

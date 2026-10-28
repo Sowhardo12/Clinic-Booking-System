@@ -17,7 +17,7 @@ export default function () {
   const patientId = (__VU - 1) % 1000 + 1;
   
   const payload = JSON.stringify({
-    slotId: 4, // Target exact same slot to trigger race condition
+    slotId: 5, // Target exact same slot to trigger race condition
     patientId: patientId,
     testRunId: 'run-contention-baseline',
   });
