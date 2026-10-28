@@ -28,4 +28,13 @@ export class AppointmentsRepository {
     const result = await this.db.query(query, [patientId, slotId]);
     return result.rows[0];
   }
+  async issueTicket(slotId: number, patientId: number, testRunId?: string) {
+  const result = await this.db.query(
+    `INSERT INTO patient_tickets (slot_id, patient_id, test_run_id)
+     VALUES ($1, $2, $3)
+     RETURNING *`,
+    [slotId, patientId, testRunId || null]
+  );
+  return result.rows[0];
+}
 }

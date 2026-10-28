@@ -55,3 +55,11 @@ CREATE TABLE IF NOT EXISTS booking_attempts (
     attempt_status VARCHAR(50) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS patient_tickets (
+  id           SERIAL PRIMARY KEY,
+  slot_id      INTEGER NOT NULL REFERENCES appointment_slots(id),
+  patient_id   INTEGER NOT NULL REFERENCES patients(id),
+  test_run_id  VARCHAR(100),
+  issued_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

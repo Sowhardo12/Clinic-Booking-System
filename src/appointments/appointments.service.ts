@@ -17,6 +17,8 @@ export class AppointmentsService {
       throw new ConflictException('Slot is already booked or blocked.');
     }
 
+    const ticket = await this.appointmentsRepo.issueTicket(slotId, patientId, testRunId);
+
     // 2. Log successful attempt (even in naive flow)
     await this.appointmentsRepo.logBookingAttempt(slotId, patientId, testRunId, 'success');
 
@@ -26,6 +28,8 @@ export class AppointmentsService {
     return {
       message: 'Appointment booked successfully (Naive Baseline)',
       slot: updatedSlot,
+      ticket:ticket,
+
     };
   }
 }

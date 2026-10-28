@@ -18,10 +18,15 @@ in the database, we wanna load test and see the what happens during the spike, s
 
 
 
+Addition: lets say the patient can have their own record like I have booked this slot, and this happens 
+
+
+
 Test Reproduction method: [][][] naive implementation
 --------------------------------
 docker compose down -v
 docker compose up -d  (recreate and populate)
+npm run seed
 
 run: npm run start:dev
 
@@ -57,3 +62,13 @@ SELECT ba.slot_id, ba.patient_id, p.full_name, ba.created_at
 FROM booking_attempts ba
 JOIN patients p ON ba.patient_id = p.id
 WHERE ba.slot_id = 1 AND ba.test_run_id = 'run-contention-baseline' AND ba.attempt_status = 'success';
+
+issue found: multiple patinet was able to successfully book one slot 
+we had 
+1. No transaction
+2. No atomic guard
+3. No lock
+
+we have created a patient ticket record, so whenever a patient request found the slot as available, marked it as successful and created a ticket entry, so we saw multiple patients 
+ticket marked the same slot. 
+
