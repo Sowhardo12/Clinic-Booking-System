@@ -20,7 +20,7 @@ export class AppointmentsService {
     // 2. Log successful attempt (even in naive flow)
     await this.appointmentsRepo.logBookingAttempt(slotId, patientId, testRunId, 'success');
 
-    // 3. Perform naive update
+    // 3 MAIN SLOT UPDATE
     const updatedSlot = await this.appointmentsRepo.bookSlotNaive(slotId, patientId);
 
     return {
