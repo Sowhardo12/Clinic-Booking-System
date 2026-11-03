@@ -1,12 +1,13 @@
 for now: 
 
-run docker-compose up -d
-then run : npm run seed
+run docker-compose up -d  (will create the tables)
+then run : npm run seed  (will populat the fields)
 
 when seeded:
 check db: docker exec -it delta_postgres_baseline psql -U postgres -d delta_diagnostic
 
 port now: 15432
+backend port: 13000
 
 NAIVE IMPLEMENTATION: 
 ---------------------
@@ -31,7 +32,7 @@ npm run seed
 run: npm run start:dev
 
 test ::
-curl "http://localhost:3000/branches/1/doctors/1/slots?date=2026-10-27"
+curl "http://localhost:13000/branches/1/doctors/1/slots?date=2026-10-27"
 curl -X POST http://localhost:3000/appointments/book \
   -H "Content-Type: application/json" \
   -d '{"slotId": 1, "patientId": 10, "testRunId": "manual-test-1"}'
@@ -42,13 +43,13 @@ then open powershell and go to the dir :C:\Users\nohan\OneDrive\Documents\MyProj
 
 [pick up a particular empty slot id] from appointment_slots table 
 
-run: on that slot 
+run: on that slot [go to the dir in powershell and run from there]
 
 k6 run .\k6\contention-test.js
 k6 run .\k6\throughput-test.js
 
 then enter db:  assume [slotId=4]
-
+r
 [1] Check how many success booking attempts were logged for slot 4
 SELECT slot_id, COUNT(*) as total_success_attempts 
 FROM booking_attempts 
@@ -101,10 +102,10 @@ result: after transaction+forUpdate: only one patient was able to book the slot
 
 
 Concurrency problem is fixed now. We have another issue, and that is prevention of double 
-clicking. An user tops book, the transaction and row locking actually books the slot and even ticket is generated, now the response has to come back but due to network error, the response drops. User or client browser might retry (double tap), and another request goes and sees the same slot is already book and show 409 conflict HTTP error. Or user may simply double tap the 
-button which may cause the same issue. Or in future there might be option for user to just select the doctor, and the system finds any available slots from that doctor from that branch on the day  .prevention is the usage of IDEMPOTENCY KEY. 
+clicking. An user taps book, the transaction and row locking actually books the slot and even ticket is generated, now the response has to come back but due to network error, the response drops. User or client browser might retry (double tap), and another request goes and sees the same slot is already booked and show 409 conflict HTTP error. Or user may simply double tap the 
+button which may cause the same issue. Or in future there might be option for user to just select the doctor, and the system finds any available slots from that doctor from that branch on the day. prevention is the usage of IDEMPOTENCY KEY. 
 
 working's of Idempotency KEY: 
 ---------------------------
 Under the same request/unit of request, when the client sends a request, the client generates an idempotency key and sends the key with the
-request header. Server has a table with a record of idempotency key and saved status. When the req arrives, the server checks if the key is already there or not. if not there, then the server runs the operation, saves the response along with the idempotency key and sends back response. When the duplicate request is same, the key remains the same, so the server does not run the same operation, rather sends back the response previously saved with the idempotency key. 
+request header. Server has a table with a record of idempotency key and saved status. When the req arrives, the server checks if the key is already there or not. if not there, then the server runs the operation, saves the response along with the idempotency key and sends back response. When the duplicate request is same, the key remains the same, so the server does not run the same operation, rather sends back the response previously saved with the idempotency key.

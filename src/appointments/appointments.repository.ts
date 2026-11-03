@@ -50,4 +50,33 @@ export class AppointmentsRepository {
     );
     return r.rows[0];
   }
+  async findIdempotencyKey(key: string, client?: PoolClient) {
+      const r = await this.run('SELECT * FROM idempotency_keys WHERE idempotency_key = $1', [key], client);
+      return r.rows[0];
+    }
+
+    async createIdempotencyKeyPending(key: string, patientId: number, client?: PoolClient) {
+      const r = await this.run(
+        `INSERT INTO idempotency_keys (idempotency_key, patient_id, status) VALUES ($1, $2, 'processing') RETURNING *`,
+        [key, patientId],
+        client,
+      );
+      return r.rows[0];
+    }
+
+    async completeIdempotencyKey(key: string, responseStatus: number, responseBody: any, client?: PoolClient) {
+      await this.run(
+        `UPDATE idempotency_keys SET status = 'completed', response_status = $1, response_body = $2 WHERE idempotency_key = $3`,
+        [responseStatus, JSON.stringify(responseBody), key],
+        client,
+      );
+    }
+
+    async failIdempotencyKey(key: string, client?: PoolClient) {
+      await this.run(
+        `UPDATE idempotency_keys SET status = 'failed' WHERE idempotency_key = $1`,
+        [key],
+        client,
+      );
+    }
 }

@@ -63,3 +63,13 @@ CREATE TABLE IF NOT EXISTS patient_tickets (
   test_run_id  VARCHAR(100),
   issued_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+    id SERIAL PRIMARY KEY,
+    idempotency_key VARCHAR(255) UNIQUE NOT NULL,
+    patient_id INT NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'processing', -- 'processing', 'completed', 'failed'
+    response_status INT,
+    response_body JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

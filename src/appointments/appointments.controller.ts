@@ -1,4 +1,4 @@
-import { Body, Controller, Post, HttpCode, HttpStatus } from '@nestjs/common';
+import { Body, Controller, Post, HttpCode,Headers, HttpStatus } from '@nestjs/common';
 import { AppointmentsService } from './appointments.service';
 import { BookAppointmentDto } from './dto/book-appointment.dto';
 
@@ -8,7 +8,7 @@ export class AppointmentsController {
 
   @Post('book')
   @HttpCode(HttpStatus.CREATED)
-  async bookAppointment(@Body() dto: BookAppointmentDto) {
-    return this.appointmentsService.bookAppointment(dto.slotId, dto.patientId, dto.testRunId);
+  async bookAppointment(@Body() dto: BookAppointmentDto,@Headers('idempotency-key') idempotencyKey?: string,) {
+    return this.appointmentsService.bookAppointment(dto.slotId, dto.patientId, dto.testRunId,idempotencyKey);
   }
 }
