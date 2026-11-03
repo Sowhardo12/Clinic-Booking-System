@@ -98,3 +98,13 @@ use this line: const slot = await this.appointmentsRepo.findSlotByIdForUpdate(cl
 /////////
 
 result: after transaction+forUpdate: only one patient was able to book the slot 
+
+
+Concurrency problem is fixed now. We have another issue, and that is prevention of double 
+clicking. An user tops book, the transaction and row locking actually books the slot and even ticket is generated, now the response has to come back but due to network error, the response drops. User or client browser might retry (double tap), and another request goes and sees the same slot is already book and show 409 conflict HTTP error. Or user may simply double tap the 
+button which may cause the same issue. Or in future there might be option for user to just select the doctor, and the system finds any available slots from that doctor from that branch on the day  .prevention is the usage of IDEMPOTENCY KEY. 
+
+working's of Idempotency KEY: 
+---------------------------
+Under the same request/unit of request, when the client sends a request, the client generates an idempotency key and sends the key with the
+request header. Server has a table with a record of idempotency key and saved status. When the req arrives, the server checks if the key is already there or not. if not there, then the server runs the operation, saves the response along with the idempotency key and sends back response. When the duplicate request is same, the key remains the same, so the server does not run the same operation, rather sends back the response previously saved with the idempotency key. 
