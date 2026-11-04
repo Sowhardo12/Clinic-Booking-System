@@ -196,4 +196,9 @@ result: increasing the pool size from 3 to 33,while keeping existing database, i
 now we run these tests again, with same state of database everytime:
 we try with 5,15,25 conn pools with fresh database everytime:
 
-result: from pool 5 to pool 15, significant throughput increase, means more req are passing, and avg latency has reduced. P95 has also decreased. As for booking, the number of successful booking increase but booking conflicts also increaed. from pool 15-25, we saw very small improvement or change so for this setup 15 is best connection pool.
+result: from pool 5 to pool 15, significant throughput increase, means more req are passing, and avg latency has reduced. P95 has also decreased. As for booking, the number of successful booking increase but booking conflicts also increaed. from pool 15-25, we saw very small improvement or change so for this setup 15 is best connection pool with this setup, my CPU capability. With vertical scaling, this pool size can be increased with more improvement. 
+
+
+Now we move to caching, but before that we have to make some decision :
+1. Cache the data that is mostly static and less likely to change
+2. do not Cache the data that changes frequently, in this case, appointment_slots

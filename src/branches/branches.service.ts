@@ -1,11 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { BranchesRepository } from './branches.repository';
+import { RedisService } from '../redis/redis.service';
 
 @Injectable()
 export class BranchesService {
   constructor(private branchesRepo: BranchesRepository) {}
 
   async getBranches() {
+
     return this.branchesRepo.findAllBranches();
   }
 

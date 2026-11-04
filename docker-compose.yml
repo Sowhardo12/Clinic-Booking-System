@@ -37,5 +37,12 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     restart: always
 
+  redis:
+      image: redis:7-alpine
+      container_name: delta_redis
+      ports:
+        - "6379:6379"
+      restart: always
+
 volumes:
   pgdata:
