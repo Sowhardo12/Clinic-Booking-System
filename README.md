@@ -179,3 +179,21 @@ if need delete: DROP INDEX title_idx;
 
 
 result analysis: slight planning time increase but significant increase in execution time (48x)
+
+read: faster
+write: slower due to indexing
+storage overhead: more space to store the B+ tree
+
+
+next: we wanna overload the database with K6 load, and check if Database connection pooling has any effects or not. Normally when Postgresql wants to run a query, it needs to create a TCP connection, so there is 3 way handshake involves, and then pg creates a new process, and all these happens before a query is executed. So it is normal when there are less queries, but if multiple concurrent requests comes and this same process is maintained, then there comes a significant overhead (the time lost just to create the connection). So pg actually keeps some conneciton open, and when i need to run a query, i just pick one connection from the pool and use it and send it back to the pool so that some other request can use it. 
+
+so we test in 4 phases 
+conneciton pools: 3,13,23,33 
+we send 150 VU's sending requests with a 10 ms break and this runs for 30seconds.
+
+result: increasing the pool size from 3 to 33,while keeping existing database, improved throughput(request per second), avg latency  and total numbe of requests. the P95 significantly dropped. But becuase of more concurrent requets, the successful booking decreased and raised more booking conflicts. As more database connection adds more requets to flow, and ID is generated at random, so more requets racing for the same appointment slot.
+
+now we run these tests again, with same state of database everytime:
+we try with 5,15,25 conn pools with fresh database everytime:
+
+result: from pool 5 to pool 15, significant throughput increase, means more req are passing, and avg latency has reduced. P95 has also decreased. As for booking, the number of successful booking increase but booking conflicts also increaed. from pool 15-25, we saw very small improvement or change so for this setup 15 is best connection pool.
