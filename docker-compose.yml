@@ -31,7 +31,7 @@ services:
     image: grafana/grafana:10.0.0
     container_name: delta_grafana
     ports:
-      - "13001:3000"
+      - "7009:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin

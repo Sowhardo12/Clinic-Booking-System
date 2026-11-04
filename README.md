@@ -109,3 +109,73 @@ working's of Idempotency KEY:
 ---------------------------
 Under the same request/unit of request, when the client sends a request, the client generates an idempotency key and sends the key with the
 request header. Server has a table with a record of idempotency key and saved status. When the req arrives, the server checks if the key is already there or not. if not there, then the server runs the operation, saves the response along with the idempotency key and sends back response. When the duplicate request is same, the key remains the same, so the server does not run the same operation, rather sends back the response previously saved with the idempotency key.
+
+now need to test: 
+Idempotency-Key: test-key-123
+have to insert it into the POST request to make a booking : working 
+
+
+now we populate more datainto it, and check core searching (without composite indexes) and then check
+the EXPLAIN ANALYZE and then add indexes and then run EXPLAIN ANALYZE to see changes 
+
+the query we wanna run: 
+------------------------
+SELECT s.id, s.start_time, s.end_time, s.status, ds.for_date
+FROM appointment_slots s
+JOIN doctor_schedules ds ON s.schedule_id = ds.id
+WHERE ds.branch_id = 1 
+  AND ds.doctor_id = 1 
+  AND ds.for_date = '2026-11-03' 
+  AND s.status = 'available'
+ORDER BY s.start_time ASC;
+
+goal: check availibility of slot of a doctor at branch and in a date 
+
+
+                                                             QUERY PLAN
+-------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=1231.83..1231.89 rows=24 width=34) (actual time=14.315..14.320 rows=24 loops=1)
+   Sort Key: s.start_time
+   Sort Method: quicksort  Memory: 26kB
+   ->  Hash Join  (cost=56.01..1231.28 rows=24 width=34) (actual time=0.516..14.260 rows=24 loops=1)
+         Hash Cond: (s.schedule_id = ds.id)
+         ->  Seq Scan on appointment_slots s  (cost=0.00..1049.00 rows=48000 width=34) (actual time=0.019..9.280 rows=48000 loops=1)
+               Filter: ((status)::text = 'available'::text)
+         ->  Hash  (cost=56.00..56.00 rows=1 width=8) (actual time=0.470..0.472 rows=1 loops=1)
+               Buckets: 1024  Batches: 1  Memory Usage: 9kB
+               ->  Seq Scan on doctor_schedules ds  (cost=0.00..56.00 rows=1 width=8) (actual time=0.011..0.452 rows=1 loops=1)
+                     Filter: ((branch_id = 1) AND (doctor_id = 1) AND (for_date = '2026-11-03'::date))
+                     Rows Removed by Filter: 1999
+ Planning Time: 0.490 ms
+ Execution Time: 14.410 ms
+(14 rows)
+
+
+now add: indexes 
+1. Composite index for fast schedule lookup by branch, doctor, and date
+CREATE INDEX IF NOT EXISTS idx_doctor_schedules_branch_doc_date 
+ON doctor_schedules (branch_id, doctor_id, for_date);
+
+
+2. Composite index for fast slot filtering by schedule and status, sorted by start time
+CREATE INDEX IF NOT EXISTS idx_appointment_slots_schedule_status_time 
+ON appointment_slots (schedule_id, status, start_time);
+
+if need delete: DROP INDEX title_idx;
+
+
+                                                                                   QUERY PLAN
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=58.24..58.30 rows=24 width=34) (actual time=0.175..0.178 rows=24 loops=1)
+   Sort Key: s.start_time
+   Sort Method: quicksort  Memory: 26kB
+   ->  Nested Loop  (cost=0.69..57.69 rows=24 width=34) (actual time=0.128..0.143 rows=24 loops=1)
+         ->  Index Scan using idx_doctor_schedules_branch_doc_date on doctor_schedules ds  (cost=0.28..8.30 rows=1 width=8) (actual time=0.088..0.089 rows=1 loops=1)
+               Index Cond: ((branch_id = 1) AND (doctor_id = 1) AND (for_date = '2026-11-03'::date))
+         ->  Index Scan using idx_appointment_slots_schedule_status_time on appointment_slots s  (cost=0.41..49.15 rows=24 width=34) (actual time=0.033..0.040 rows=24 loops=1)
+               Index Cond: ((schedule_id = ds.id) AND ((status)::text = 'available'::text))
+ Planning Time: 3.159 ms
+ Execution Time: 0.300 ms
+
+
+result analysis: slight planning time increase but significant increase in execution time (48x)

@@ -11,49 +11,61 @@ const pool = new Pool({
 });
 
 const BRANCHES = [
-  { name: 'Dhaka', district: 'Dhaka' },
-  { name: 'Rajshahi', district: 'Rajshahi' },
-  { name: 'Khulna', district: 'Khulna' },
-  { name: 'Natore', district: 'Natore' },
-  { name: 'Rangpur', district: 'Rangpur' },
-  { name: 'Kurigram', district: 'Kurigram' },
-  { name: 'Sylhet', district: 'Sylhet' },
-  { name: 'Chittagong', district: 'Chittagong' },
-  { name: 'Borishal', district: 'Borishal' },
-  { name: 'Maymensing', district: 'Maymensing' },
+  { name: 'Dhaka Central', district: 'Dhaka' },
+  { name: 'Rajshahi Medical Hub', district: 'Rajshahi' },
+  { name: 'Khulna Care', district: 'Khulna' },
+  { name: 'Natore Diagnostic', district: 'Natore' },
+  { name: 'Rangpur Health', district: 'Rangpur' },
+  { name: 'Kurigram Clinic', district: 'Kurigram' },
+  { name: 'Sylhet Eastern', district: 'Sylhet' },
+  { name: 'Chittagong Port View', district: 'Chittagong' },
+  { name: 'Borishal Riverview', district: 'Borishal' },
+  { name: 'Mymensingh Northern', district: 'Mymensing' },
+];
+
+const SPECIALTIES = [
+  'Cardiology',
+  'Neurology',
+  'Orthopedics',
+  'Pediatrics',
+  'Dermatology',
+  'Medicine',
+  'Gynecology',
+  'Ophthalmology',
 ];
 
 async function seed() {
-  console.log('Starting database seeding...');
+  console.log('🌱 Starting high-volume database seeding (~48,000+ slots, 5,000 patients)...');
   const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
 
+    // Clean existing test data safely
+    console.log('🧹 Cleaning old mock data...');
+    await client.query(`
+      TRUNCATE TABLE patient_tickets, booking_attempts, idempotency_keys,
+                     appointment_slots, doctor_schedules, doctor_branch_assignments,
+                     patients, doctors, branches RESTART IDENTITY CASCADE;
+    `);
 
+    // 1. Seed Branches
     const branchIds: number[] = [];
     for (const b of BRANCHES) {
       const res = await client.query(
-        `INSERT INTO branches (branch_name, district) 
-         VALUES ($1, $2) 
-         ON CONFLICT DO NOTHING 
-         RETURNING id`,
+        `INSERT INTO branches (branch_name, district) VALUES ($1, $2) RETURNING id`,
         [b.name, b.district]
       );
-      if (res.rows.length > 0) {
-        branchIds.push(res.rows[0].id);
-      } else {
-        const existing = await client.query('SELECT id FROM branches WHERE branch_name = $1', [b.name]);
-        branchIds.push(existing.rows[0].id);
-      }
+      branchIds.push(res.rows[0].id);
     }
     console.log(`✓ Seeded ${branchIds.length} branches.`);
 
-  
+    // 2. Seed 200 Doctors
+    const doctorCount = 200;
     const doctorIds: number[] = [];
-    for (let i = 1; i <= 50; i++) {
-      const name = `Dr. Doctor ${i}`;
-      const specialty = i % 2 === 0 ? 'Cardiology' : 'Medicine';
+    for (let i = 1; i <= doctorCount; i++) {
+      const name = `Dr. Specialist ${i}`;
+      const specialty = SPECIALTIES[i % SPECIALTIES.length];
       const res = await client.query(
         `INSERT INTO doctors (full_name, specialty) VALUES ($1, $2) RETURNING id`,
         [name, specialty]
@@ -62,7 +74,7 @@ async function seed() {
     }
     console.log(`✓ Seeded ${doctorIds.length} doctors.`);
 
-
+    // 3. Assign Doctors to Branches
     for (let i = 0; i < doctorIds.length; i++) {
       const docId = doctorIds[i];
       const branchId = branchIds[i % branchIds.length];
@@ -71,28 +83,49 @@ async function seed() {
         [docId, branchId]
       );
     }
-    console.log(`✓ Assigned doctors to branches.`);
+    console.log(`✓ Assigned doctors across branches.`);
 
+    // 4. Seed 5,000 Persistent Patients
+    const patientCount = 5000;
+    console.log(`⏳ Seeding ${patientCount} patients (this may take a moment)...`);
 
-    const patientCount = 1000;
-    for (let i = 1; i <= patientCount; i++) {
-      const phone = `+8801700${String(i).padStart(5, '0')}`;
+    // Batch insert patients for performance
+    const patientBatchSize = 500;
+    for (let i = 0; i < patientCount; i += patientBatchSize) {
+      const values: string[] = [];
+      const params: any[] = [];
+      let paramIndex = 1;
+
+      for (let j = 1; j <= patientBatchSize && (i + j) <= patientCount; j++) {
+        const pNum = i + j;
+        const phone = `+88017${String(pNum).padStart(7, '0')}`;
+        const name = `Patient ${pNum}`;
+        values.push(`($${paramIndex}, $${paramIndex + 1})`);
+        params.push(name, phone);
+        paramIndex += 2;
+      }
+
       await client.query(
-        `INSERT INTO patients (full_name, phone) VALUES ($1, $2) ON CONFLICT (phone) DO NOTHING`,
-        [`Patient ${i}`, phone]
+        `INSERT INTO patients (full_name, phone) VALUES ${values.join(', ')} ON CONFLICT (phone) DO NOTHING`,
+        params
       );
     }
     console.log(`✓ Seeded ${patientCount} persistent patients.`);
 
-
-    const dates = [
-      new Date().toISOString().split('T')[0],
-      new Date(Date.now() + 86400000).toISOString().split('T')[0],
-    ];
+    // 5. Seed Schedules and Slots (10 Days: today + next 9 days)
+    const daysToSeed = 10;
+    const dates: string[] = [];
+    const today = new Date();
+    for (let d = 0; d < daysToSeed; d++) {
+      const targetDate = new Date(today);
+      targetDate.setDate(today.getDate() + d);
+      dates.push(targetDate.toISOString().split('T')[0]);
+    }
 
     let totalSlots = 0;
+    console.log(`⏳ Generating schedules and appointment slots across ${daysToSeed} days...`);
+
     for (const docId of doctorIds) {
-     
       const assignRes = await client.query('SELECT branch_id FROM doctor_branch_assignments WHERE doctor_id = $1', [docId]);
       const branchId = assignRes.rows[0].branch_id;
 
@@ -104,9 +137,10 @@ async function seed() {
         );
         const scheduleId = schedRes.rows[0].id;
 
-
+        // Generate 24 slots per schedule (18:00 to 22:00 at 10-min intervals)
         let currentMinutes = 18 * 60;
         const endMinutes = 22 * 60;
+
         while (currentMinutes < endMinutes) {
           const startH = Math.floor(currentMinutes / 60).toString().padStart(2, '0');
           const startM = (currentMinutes % 60).toString().padStart(2, '0');
@@ -125,13 +159,12 @@ async function seed() {
         }
       }
     }
-    console.log(`✓ Generated ${totalSlots} appointment slots.`);
 
     await client.query('COMMIT');
-    console.log(' Seeding completed successfully!');
+    console.log(`🎉 High-volume seeding completed successfully! Total Appointment Slots Generated: ${totalSlots}`);
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error('Seeding failed:', err);
+    console.error('❌ High-volume seeding failed:', err);
     throw err;
   } finally {
     client.release();

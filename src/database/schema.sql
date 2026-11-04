@@ -73,3 +73,10 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
     response_body JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+
+CREATE INDEX IF NOT EXISTS idx_doctor_schedules_branch_doc_date
+ON doctor_schedules (branch_id, doctor_id, for_date);
+
+CREATE INDEX IF NOT EXISTS idx_appointment_slots_schedule_status_time
+ON appointment_slots (schedule_id, status, start_time);
