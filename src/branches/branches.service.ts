@@ -4,16 +4,36 @@ import { RedisService } from '../redis/redis.service';
 
 @Injectable()
 export class BranchesService {
-  constructor(private branchesRepo: BranchesRepository) {}
+  constructor(private branchesRepo: BranchesRepository,
+    private redisService: RedisService,) { }
 
   async getBranches() {
-
-    return this.branchesRepo.findAllBranches();
+    const cache_key = 'cache:branches:all';
+    const cached = await this.redisService.get(cache_key);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+    //cache miss
+    const branches = await this.branchesRepo.findAllBranches();
+    await this.redisService.set(cache_key, JSON.stringify(branches), 60);
+    return branches;
   }
 
   async getDoctors(branchId: number) {
-    return this.branchesRepo.findDoctorsByBranch(branchId);
-  }
+      const cacheKey = `cache:branch:${branchId}:doctors`;
+
+      const cached = await this.redisService.get(cacheKey);
+    if (cached) {
+        console.log("Cache Hit")
+        return JSON.parse(cached);
+      }
+      console.log("Cache Miss- db query")
+      const doctors = await this.branchesRepo.findDoctorsByBranch(branchId);
+    await this.redisService.set(cacheKey, JSON.stringify(doctors), 60);
+    console.log("Added to cache")
+
+      return doctors;
+    }
 
   async getSlots(branchId: number, doctorId: number, date: string) {
     return this.branchesRepo.findAvailableSlots(branchId, doctorId, date);

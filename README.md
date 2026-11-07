@@ -202,3 +202,26 @@ result: from pool 5 to pool 15, significant throughput increase, means more req 
 Now we move to caching, but before that we have to make some decision :
 1. Cache the data that is mostly static and less likely to change
 2. do not Cache the data that changes frequently, in this case, appointment_slots
+
+so only for viewing branches data and doctor information, we cache that in redis, becuase they don't change frequently. 
+
+docker exec -it delta_redis redis-cli keys "*"  - >  check redis keys in memory
+
+working fine 
+now we need to keep realism in this, which is adding payment process, becuase a clinic or any booking 
+is half-finished without the payment part, and payment part is complex and needs secure transaction and 
+many times its more prone to error (causing payment failurs) so a concrete payment gateway is needed.
+For in depth understanding of the payment process, we will create a gateway in the seperate repository and then connect using inter-service communication.
+
+
+payment is ongoing development, meanwhile i thought about another thing, can we show N+1 query problem here? 
+we will keep one endpoint for admin, admin can see all the doctors from a branch 
+naive way: fetch all the doctors id from a branch (1 query)
+then loop through N doctors and for each fetch their information
+so for 100 doctors in the branch, total 101 database query needed, which is normal for small scale, but if there are 10000 doctors, then it becomes troublesome. 
+so we optimize this. 
+
+some other scenerio : 
+
+show me all doctors from a branch 
+1. i have a branch with branch id, and a date, for that day i wanna see which patients booked in the branch

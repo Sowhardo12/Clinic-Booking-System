@@ -7,11 +7,13 @@ export class BranchesController {
 
   @Get()
   async getAllBranches() {
+
     return this.branchesService.getBranches();
   }
 
   @Get(':branchId/doctors')
   async getDoctorsByBranch(@Param('branchId', ParseIntPipe) branchId: number) {
+
     return this.branchesService.getDoctors(branchId);
   }
 
