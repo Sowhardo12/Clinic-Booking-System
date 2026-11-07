@@ -248,3 +248,6 @@ deduction: for large number of data, the optimized query is very efficiant.
 
 next plan: add a payment module integrated and add network delays and payment failures and all cases. 
 then: add interface to all the repositories. and explain why is it needed. also discuss why this deisgn structure for the project and what future benefits can be there. also check for SOLID principle gaps.
+
+
+adding: a payment system (fake) which will have 85% payment success through randomness just to mock the process. When a slot is being booked, first the slot will be checked, if its not available but reserved and reservation (2m) time hasent exceeded, then its a no go. If the reservation has exceeded the time then the slot is cleared and made available and slot can be booked for 2 mins, and then payment will happen, if it fails then the slot will be automatically cleared and declared available so that some other request can attempt to book it. If the payment happens then the the slot status will be booked.

@@ -78,5 +78,76 @@ export class AppointmentsRepository {
         [key],
         client,
       );
+  }
+  // Find slot and auto-release if previous reservation expired
+    async findAndCleanExpiredSlot(client: PoolClient, slotId: number) {
+      const r = await client.query(
+        `SELECT * FROM appointment_slots WHERE id = $1 FOR UPDATE`,
+        [slotId]
+      );
+      const slot = r.rows[0];
+
+      // If reserved and reservation time has passed, auto-release it back to available
+      if (slot && slot.status === 'reserved' && slot.reserved_until && new Date() > new Date(slot.reserved_until)) {
+        await client.query(
+          `UPDATE appointment_slots SET status = 'available', patient_id = NULL, reserved_until = NULL WHERE id = $1`,
+          [slotId]
+        );
+        slot.status = 'available';
+        slot.patient_id = null;
+        slot.reserved_until = null;
+      }
+      return slot;
+    }
+
+    // Temporarily hold slot for payment
+    async reserveSlot(client: PoolClient, slotId: number, patientId: number, holdMinutes: number = 2) {
+      const r = await client.query(
+        `UPDATE appointment_slots
+         SET status = 'reserved', patient_id = $1, reserved_until = NOW() + MAKE_INTERVAL(mins => $2)
+         WHERE id = $3 AND (status = 'available' OR (status = 'reserved' AND reserved_until < NOW()))
+         RETURNING *`,
+        [patientId, holdMinutes, slotId]
+      );
+      return r.rows[0];
+    }
+
+    // Confirm booking upon successful payment
+    async confirmBooking(client: PoolClient, slotId: number, patientId: number) {
+      const r = await client.query(
+        `UPDATE appointment_slots
+         SET status = 'booked', reserved_until = NULL
+         WHERE id = $1 AND patient_id = $2
+         RETURNING *`,
+        [slotId, patientId]
+      );
+      return r.rows[0];
+    }
+
+    // Release slot back to available upon payment failure
+    async releaseSlot(client: PoolClient, slotId: number, patientId: number) {
+      await client.query(
+        `UPDATE appointment_slots
+         SET status = 'available', patient_id = NULL, reserved_until = NULL
+         WHERE id = $1 AND patient_id = $2`,
+        [slotId, patientId]
+      );
+    }
+
+    // Record payment attempt
+    async recordPayment(client: PoolClient, slotId: number, patientId: number, status: string, txnId: string) {
+      const r = await client.query(
+        `INSERT INTO payments (slot_id, patient_id, payment_status, transaction_id) VALUES ($1, $2, $3, $4) RETURNING *`,
+        [slotId, patientId, status, txnId]
+      );
+      return r.rows[0];
+  }
+  // Check if patient already booked or reserved this specific slot
+    async findActiveBookingByPatientAndSlot(client: PoolClient, slotId: number, patientId: number) {
+      const r = await client.query(
+        `SELECT * FROM appointment_slots WHERE id = $1 AND patient_id = $2 AND status IN ('booked', 'reserved')`,
+        [slotId, patientId]
+      );
+      return r.rows[0];
     }
 }

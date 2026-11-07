@@ -1,22 +1,17 @@
-import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
+import { Injectable, ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { AppointmentsRepository } from './appointments.repository';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class AppointmentsService {
   constructor(private appointmentsRepo: AppointmentsRepository) {}
 
   async bookAppointment(slotId: number, patientId: number, testRunId?: string, idempotencyKey?: string) {
-    // 1. If an idempotency key is provided, check its existing status first
     if (idempotencyKey) {
       const existing = await this.appointmentsRepo.findIdempotencyKey(idempotencyKey);
       if (existing) {
-        if (existing.status === 'completed') {
-          // Return cached response instantly
-          return existing.response_body;
-        }
-        if (existing.status === 'processing') {
-          throw new ConflictException('A request with this idempotency key is currently being processed.');
-        }
+        if (existing.status === 'completed') return existing.response_body;
+        if (existing.status === 'processing') throw new ConflictException('Request currently processing.');
       }
     }
 
@@ -25,46 +20,71 @@ export class AppointmentsService {
     try {
       await client.query('BEGIN');
 
-      // Register idempotency key as 'processing' if provided
       if (idempotencyKey) {
         const existingInTx = await this.appointmentsRepo.findIdempotencyKey(idempotencyKey, client);
-        if (existingInTx) {
-          if (existingInTx.status === 'completed') {
-            await client.query('COMMIT');
-            return existingInTx.response_body;
-          }
-          throw new ConflictException('Concurrent request with same idempotency key.');
-        } else {
-          await this.appointmentsRepo.createIdempotencyKeyPending(idempotencyKey, patientId, client);
+        if (existingInTx?.status === 'completed') {
+          await client.query('COMMIT');
+          return existingInTx.response_body;
         }
+        await this.appointmentsRepo.createIdempotencyKeyPending(idempotencyKey, patientId, client);
       }
 
-      // 2. Lock slot row with FOR UPDATE
-      const slot = await this.appointmentsRepo.findSlotByIdForUpdate(client, slotId);
+      // 1. Check and clean expired reservations, lock row
+      const slot = await this.appointmentsRepo.findAndCleanExpiredSlot(client, slotId);
       if (!slot) {
-        await this.appointmentsRepo.logBookingAttempt(slotId, patientId, testRunId, 'failed_unavailable', client);
         await client.query('COMMIT');
         throw new NotFoundException('Appointment slot not found.');
+      }
+
+      const existing_booking = await this.appointmentsRepo.findActiveBookingByPatientAndSlot(client, slotId, patientId)
+      if (existing_booking) {
+        await client.query('COMMIT');
+        throw new BadRequestException('You have already booked this slot');
       }
 
       if (slot.status !== 'available') {
         await this.appointmentsRepo.logBookingAttempt(slotId, patientId, testRunId, 'failed_unavailable', client);
         await client.query('COMMIT');
-        throw new ConflictException('Slot is already booked or blocked.');
+        throw new ConflictException('Slot is currently booked or reserved by another patient.');
       }
 
-      // 3. Issue ticket and update slot
+      // 2. Temporarily reserve the slot for 2 minutes
+      const reservedSlot = await this.appointmentsRepo.reserveSlot(client, slotId, patientId, 2);
+      if (!reservedSlot) {
+        await client.query('COMMIT');
+        throw new ConflictException('Failed to secure temporary hold on slot.');
+      }
+
+      // 3. Simulate Payment Gateway Processing (e.g., 85% success probability)
+      const isPaymentSuccessful = Math.random() < 0.85;
+      const transactionId = `TXN-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+
+      if (!isPaymentSuccessful) {
+        // Payment Failed: Record failure, release slot immediately back to available
+        await this.appointmentsRepo.recordPayment(client, slotId, patientId, 'failed', transactionId);
+        await this.appointmentsRepo.releaseSlot(client, slotId, patientId);
+        await this.appointmentsRepo.logBookingAttempt(slotId, patientId, testRunId, 'failed_payment', client);
+
+        await client.query('COMMIT');
+        throw new BadRequestException({
+          message: 'Payment failed. Slot has been released back to available.',
+          transactionId,
+        });
+      }
+
+      // 4. Payment Success: Record payment, issue permanent ticket, mark slot as booked
+      await this.appointmentsRepo.recordPayment(client, slotId, patientId, 'success', transactionId);
       const ticket = await this.appointmentsRepo.issueTicket(slotId, patientId, testRunId, client);
-      const updatedSlot = await this.appointmentsRepo.bookSlotNaive(slotId, patientId, client);
+      const bookedSlot = await this.appointmentsRepo.confirmBooking(client, slotId, patientId);
       await this.appointmentsRepo.logBookingAttempt(slotId, patientId, testRunId, 'success', client);
 
       const responsePayload = {
-        message: 'Booked successfully (Idempotent + Transactional + Row Locked)',
-        slot: updatedSlot,
+        message: 'Appointment booked and payment successful!',
+        transactionId,
+        slot: bookedSlot,
         ticket,
       };
 
-      // 4. Complete idempotency record
       if (idempotencyKey) {
         await this.appointmentsRepo.completeIdempotencyKey(idempotencyKey, 201, responsePayload, client);
       }
