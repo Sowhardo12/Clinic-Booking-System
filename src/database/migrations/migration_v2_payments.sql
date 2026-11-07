@@ -1,0 +1,15 @@
+
+
+
+ALTER TABLE appointment_slots ADD COLUMN IF NOT EXISTS reserved_until TIMESTAMPTZ;
+
+
+CREATE TABLE IF NOT EXISTS payments (
+    id SERIAL PRIMARY KEY,
+    slot_id INT NOT NULL REFERENCES appointment_slots(id) ON DELETE CASCADE,
+    patient_id INT NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    amount NUMERIC(10, 2) NOT NULL DEFAULT 500.00,
+    payment_status VARCHAR(50) NOT NULL,
+    transaction_id VARCHAR(100) UNIQUE NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

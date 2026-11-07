@@ -5,6 +5,9 @@ then run : npm run seed  (will populat the fields)
 
 when seeded:
 check db: docker exec -it delta_postgres_baseline psql -U postgres -d delta_diagnostic
+migration: update sql file keep inside migrations/ folder with a suitable name (i.e: migration_v2_payments.sql)
+run in bash: 
+docker exec -i delta_postgres_baseline psql -U postgres -d delta_diagnostic < src/database/migrations/migration_v2_payments.sql
 
 port now: 15432
 backend port: 13000
@@ -239,3 +242,9 @@ Optimized: 1 query, 33 ms
 Time reduction: ~92.9% (462 ms → 33 ms)
 
 deduction: for large number of data, the optimized query is very efficiant.
+
+
+
+
+next plan: add a payment module integrated and add network delays and payment failures and all cases. 
+then: add interface to all the repositories. and explain why is it needed. also discuss why this deisgn structure for the project and what future benefits can be there. also check for SOLID principle gaps.
