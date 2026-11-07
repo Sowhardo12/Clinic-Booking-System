@@ -225,3 +225,17 @@ some other scenerio :
 
 show me all doctors from a branch 
 1. i have a branch with branch id, and a date, for that day i wanna see which patients booked in the branch
+
+[for both case: result:]
+
+Case 1: Branch Doctors
+N+1: 21 queries, 63 ms
+Optimized: 1 query, 6 ms
+Time reduction: ~90.5% (63 ms → 6 ms)
+
+Case 2: Branch Bookings (2026-11-04)
+N+1: 82 queries, 462 ms
+Optimized: 1 query, 33 ms
+Time reduction: ~92.9% (462 ms → 33 ms)
+
+deduction: for large number of data, the optimized query is very efficiant.
