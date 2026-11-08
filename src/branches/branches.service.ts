@@ -1,10 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 import { BranchesRepository } from './branches.repository';
 import { RedisService } from '../redis/redis.service';
-
+import { BRANCHES_REPOSITORY } from './interfaces/branch.repository.interface';
+import { IBranchesRepository } from './interfaces/branch.repository.interface';
 @Injectable()
+
 export class BranchesService {
-  constructor(private branchesRepo: BranchesRepository,
+  constructor(@Inject(BRANCHES_REPOSITORY) private readonly branchesRepo: IBranchesRepository,
     private redisService: RedisService,) { }
 
   async getBranches() {

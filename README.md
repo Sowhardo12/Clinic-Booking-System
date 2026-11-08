@@ -229,6 +229,13 @@ some other scenerio :
 show me all doctors from a branch 
 1. i have a branch with branch id, and a date, for that day i wanna see which patients booked in the branch
 
+req:
+curl -i "http://localhost:7333/admin/branches/1/bookings-n-plus-one?date=2026-11-04"
+curl -i "http://localhost:7333/admin/branches/1/bookings-optimized?date=2026-11-04"
+
+
+
+
 [for both case: result:]
 
 Case 1: Branch Doctors

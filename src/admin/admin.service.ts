@@ -1,11 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { AdminRepository } from './admin.repository';
+import type { IAdminRepository } from './interfaces/admin.repository.interface';
+import { ADMIN_REPOSITORY } from './interfaces/admin.repository.interface';
 
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
-  constructor(private adminRepo: AdminRepository) {}
-
+  constructor(@Inject(ADMIN_REPOSITORY) private readonly adminRepo: IAdminRepository) {}
+  // constructor(private adminRepo: AdminRepository) {}
   // N+1 Anti-Pattern Implementation
   async getBranchDoctorsNPlusOne(branchId: number) {
     const startTime = Date.now();

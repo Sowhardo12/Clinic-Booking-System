@@ -1,10 +1,13 @@
-import { Injectable, ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Inject, ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { AppointmentsRepository } from './appointments.repository';
+import { APPOINTMENTS_REPOSITORY } from './interfaces/appointment.repository.interface';
+import { IAppointmentsRepository } from './interfaces/appointment.repository.interface';
 import * as crypto from 'crypto';
 
 @Injectable()
 export class AppointmentsService {
-  constructor(private appointmentsRepo: AppointmentsRepository) {}
+  constructor( @Inject(APPOINTMENTS_REPOSITORY) private readonly appointmentsRepo: IAppointmentsRepository) {}
+  // constructor(private appointmentsRepo: AppointmentsRepository) {}
 
   async bookAppointment(slotId: number, patientId: number, testRunId?: string, idempotencyKey?: string) {
     if (idempotencyKey) {
