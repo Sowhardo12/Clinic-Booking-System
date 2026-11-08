@@ -2,11 +2,13 @@ import { Injectable, Inject, ConflictException, NotFoundException, BadRequestExc
 import { AppointmentsRepository } from './appointments.repository';
 import { APPOINTMENTS_REPOSITORY } from './interfaces/appointment.repository.interface';
 import { IAppointmentsRepository } from './interfaces/appointment.repository.interface';
+import { MetricsService } from 'src/observability/metrics.service';
 import * as crypto from 'crypto';
 
 @Injectable()
 export class AppointmentsService {
-  constructor( @Inject(APPOINTMENTS_REPOSITORY) private readonly appointmentsRepo: IAppointmentsRepository) {}
+  constructor(@Inject(APPOINTMENTS_REPOSITORY) private readonly appointmentsRepo: IAppointmentsRepository,
+    private metricService:MetricsService) { }
   // constructor(private appointmentsRepo: AppointmentsRepository) {}
 
   async bookAppointment(slotId: number, patientId: number, testRunId?: string, idempotencyKey?: string) {
@@ -63,7 +65,8 @@ export class AppointmentsService {
       const transactionId = `TXN-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
 
       if (!isPaymentSuccessful) {
-        // Payment Failed: Record failure, release slot immediately back to available
+        // Payment failure
+        this.metricService.bookingAttemptsTotal.inc({ status: 'failed_payment' });
         await this.appointmentsRepo.recordPayment(client, slotId, patientId, 'failed', transactionId);
         await this.appointmentsRepo.releaseSlot(client, slotId, patientId);
         await this.appointmentsRepo.logBookingAttempt(slotId, patientId, testRunId, 'failed_payment', client);
@@ -76,6 +79,7 @@ export class AppointmentsService {
       }
 
       // 4. Payment Success: Record payment, issue permanent ticket, mark slot as booked
+      this.metricService.bookingAttemptsTotal.inc({ status: 'success' });
       await this.appointmentsRepo.recordPayment(client, slotId, patientId, 'success', transactionId);
       const ticket = await this.appointmentsRepo.issueTicket(slotId, patientId, testRunId, client);
       const bookedSlot = await this.appointmentsRepo.confirmBooking(client, slotId, patientId);

@@ -258,3 +258,48 @@ then: add interface to all the repositories. and explain why is it needed. also 
 
 
 adding: a payment system (fake) which will have 85% payment success through randomness just to mock the process. When a slot is being booked, first the slot will be checked, if its not available but reserved and reservation (2m) time hasent exceeded, then its a no go. If the reservation has exceeded the time then the slot is cleared and made available and slot can be booked for 2 mins, and then payment will happen, if it fails then the slot will be automatically cleared and declared available so that some other request can attempt to book it. If the payment happens then the the slot status will be booked.
+
+
+
+[[[[[why did we use Interface in repositories?]]]]]
+
+
+without interface : 
+@Injectable()
+export class AppointmentsService {
+  constructor(
+    private appointmentsRepo: AppointmentsRepository,
+  ) {}
+}
+
+the repository class is tightly coupled with the service class. with interface: 
+
+constructor(
+  @Inject(APPOINTMENTS_REPOSITORY)
+  private readonly appointmentsRepo: IAppointmentsRepository,
+) {}
+
+benefits: 
+1. loose coupoling 
+2. Dependency Inversion DIP : High-level business logic should depend on abstractions rather than concrete implementations.
+3. Open-Close principle: Can change or modify the repository class without touching the service class
+
+
+[[[[[why did we use Postgresql, not SQLLite or Mongodb?]]]]]
+
+PostgreSQL was chosen because the clinic booking system has highly relational data involving patients, doctors, branches, schedules, slots, tickets, and payments. It provides the database features we want to explore, including JOINs, transactions, row-level locking, concurrency control, and query optimization. SQLite has more limited concurrent-write capabilities, while MongoDB uses a different data model, making PostgreSQL the best fit for our learning objectives.
+
+[[[[[why did we use n=3 tier architecture?]]]]]
+
+We chose N-tier (Controller → Service → Repository) architecture to separate responsibilities and reduce coupling in the Clinic Booking System. The Controller handles HTTP requests and responses, the Service manages business logic (booking rules, transactions, idempotency, etc.), and the Repository handles database operations (SQL queries). This separation makes the application easier to maintain, test, debug, and extend because changes in one layer don't necessarily require changes in others. It also allows us to replace implementations, such as database access methods, without rewriting the business logic.
+
+[[[[[why used Pessimistic locking not Optimisitc locking?]]]]]
+
+Optimistic locking is useful where concurrency conflicts are rare, but in our case, the conflicts
+are more imminent. So row level locking is more important than looking at the version, less chances of 
+concurrency.
+
+
+
+for the last part: we add server observability using promethous client
+curl -i http://localhost:7333/metrics  to seee all the metrics
