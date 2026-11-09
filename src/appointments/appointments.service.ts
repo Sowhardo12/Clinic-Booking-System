@@ -24,7 +24,7 @@ export class AppointmentsService {
 
     // --- PHASE 1: Fast Transaction to Secure Temporary Hold (Connection Released Immediately) ---
     const client = await this.appointmentsRepo.getClient();
-    let reservedSlot;
+    let reservedSlot:any;
     try {
       await client.query('BEGIN');
 
@@ -48,6 +48,9 @@ export class AppointmentsService {
 
       // Reserve slot for 2 minutes
       reservedSlot = await this.appointmentsRepo.reserveSlot(client, slotId, patientId, 2);
+      if (!reservedSlot) {
+        throw new ConflictException('Failed to reserve appointment slot.');
+      }
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});
@@ -80,9 +83,14 @@ export class AppointmentsService {
       }
 
       // Payment Success: Confirm booking and issue ticket
+
+      const bookedSlot = await this.appointmentsRepo.confirmBooking(finalClient, slotId, patientId);
+      if (!bookedSlot) {
+        throw new ConflictException('Failed to finally book appointment slot. already booked by someone else');
+        //refund payment option here
+      }
       await this.appointmentsRepo.recordPayment(finalClient, slotId, patientId, 'success', paymentResult.transactionId);
       const ticket = await this.appointmentsRepo.issueTicket(slotId, patientId, testRunId, finalClient);
-      const bookedSlot = await this.appointmentsRepo.confirmBooking(finalClient, slotId, patientId);
       this.metricsService.bookingAttemptsTotal.inc({ status: 'success' });
 
       const responsePayload = {

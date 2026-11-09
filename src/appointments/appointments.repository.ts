@@ -117,7 +117,8 @@ export class AppointmentsRepository {
       const r = await client.query(
         `UPDATE appointment_slots
          SET status = 'booked', reserved_until = NULL
-         WHERE id = $1 AND patient_id = $2
+         WHERE id = $1 AND status = 'reserved'
+           AND reserved_until > NOW() AND patient_id = $2
          RETURNING *`,
         [slotId, patientId]
       );
