@@ -303,3 +303,20 @@ concurrency.
 
 for the last part: we add server observability using promethous client
 curl -i http://localhost:7333/metrics  to seee all the metrics
+
+
+
+current problem: we have detected a problem with the concurrent booking logic. Although our payment 
+system is a mocking payment system but it has two problems.
+1. SOLID - SRP: too many implementaiton is inside the bookAppointment class 
+2. SOLID - OCP: if wanna change the mock payment with actual one, we will have to touch the core bookAppointment class 
+3. SOLID - ISP: the IAppointment interface is bloated (connected with 1, doing many things)
+4. the payment occurs inside a database transaction, so the connection is hold for that moment, and unless someone else is trying the slot, the slot will show reserved (unavailable) so real users will think that slot is unavailable. 
+5. the payment occurs inside a database transaction, so in real world that may take time and it takes up 
+a connection for long. we need to introduce a mock payment service, so when user is able to book the slot, 
+the slot is reserved with the expiration time, and then the payment info is sent to the mock gateway/payment service (we wont use real but system should be so that later we can replace with real one - through interface). and connection is released. when payment success message is sent, then the slots status is changed to 'booked' from 'reserved' and expiary date becomes null. and if payment is failed then failed status will be sent and the slot status will become 'available' from 'reserved'. 
+
+
+solved:
+1. The payment is taken to a seperate module, and implemented in the Appointment Service through abstraction (interface), now the OCP is solved, and SRP is somehow solved, the Appointment Service does only its needed to do. Payment is seperated
+2. When available slot is found, slot is reserved with expiration and then the commit happens. now payment either returns failure or success. if failure, then the slot is released and made available. if success then the slot is marked booked with null expiration. We are also keeping the clean findAndCleanExpiredSlot when trying a slot for availibility, becuase in case, if due to network delay the response does not come from the payment service, then the slot is expired but reserved. unless the patient explicitly click the slot (only then the clean method will be called) the slot will show reserved. Its a flaw: will be fixed in the future
