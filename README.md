@@ -1,18 +1,74 @@
 # Clinic Booking System: Concurrency & Performance Lab
 
+A NestJS + PostgreSQL + Redis backend for a multi-branch clinic appointment system. It started as a deliberately naive baseline. Each flaw was then reproduced under load (k6), fixed, and measured again (k6, `EXPLAIN ANALYZE`).
+
 ## Goal
 
-Build a clinic appointment booking backend (NestJS, PostgreSQL, Redis) as a deliberately naive baseline, then find and fix its concurrency and performance problems one at a time. Each fix is measured with load tests (k6) and query plans (`EXPLAIN ANALYZE`), so every decision here is backed by numbers.
+Learn and demonstrate how a booking system behaves under high concurrency, and how to make it correct, fast and maintainable. Every design decision below is backed by a test result.
 
-Problems covered:
+## Highlights
 
-1. Race condition: multiple patients booking the same slot
-2. Double submit: retries and double taps creating duplicate bookings
-3. Slow reads: sequential scans on slot lookup
-4. N+1 queries in admin endpoints
-5. Connection pool sizing under load
-6. Caching of read-heavy data
-7. Payment flow with slot reservation (in progress)
+| Area | Problem | Fix | Result |
+|---|---|---|---|
+| Concurrency | Many patients booked the same slot | Transaction + `SELECT ... FOR UPDATE` | Exactly 1 booking per slot |
+| Idempotency | Retry or double tap returned `409` after a successful booking | `Idempotency-Key` header + `idempotency_keys` table | Duplicate requests return the saved response |
+| Query speed | Seq Scan over 48,000 slots | Two composite indexes | 14.410 ms → 0.300 ms (~48x) |
+| N+1 | 1 query per row in admin endpoints | Single `JOIN` | ~90.5% and ~92.9% faster |
+| Pooling | Connection setup overhead under 150 VUs | Tuned `pg` pool | Best size: 15 on this hardware |
+| Caching | Repeated reads of static data | Redis for branches and doctors only | Slots never cached |
+| Payments | Payment inside a DB transaction held connections and blocked slots | Reserve → commit → pay outside the transaction | Short transactions, gateway replaceable |
+| Design | Business logic coupled to infrastructure | Controller → Service → Repository, interfaces, dependency injection | SOLID-aligned, swappable implementations |
+| Observability | No visibility into runtime behavior | Prometheus metrics endpoint | `/metrics` |
+
+---
+
+## Architecture and SOLID
+
+Layers (N-tier):
+
+```
+Controller  →  Service  →  Repository / PaymentGateway (interfaces)  →  PostgreSQL / Redis / Payment service
+ HTTP         business      data access and external systems
+```
+
+- **Controller:** HTTP request and response only.
+- **Service:** business rules (booking, reservation, transactions, idempotency).
+- **Repository:** SQL only.
+
+### Dependency injection and Dependency Inversion
+
+Services depend on interfaces, not concrete classes. NestJS injects the implementation through a token:
+
+```ts
+// Before: tightly coupled to the concrete class
+constructor(private appointmentsRepo: AppointmentsRepository) {}
+
+// After: depends on an abstraction, implementation injected by Nest
+constructor(
+  @Inject(APPOINTMENTS_REPOSITORY)
+  private readonly appointmentsRepo: IAppointmentsRepository,
+  @Inject(PAYMENT_GATEWAY)
+  private readonly paymentGateway: IPaymentGateway,
+) {}
+```
+
+The module binds the token to an implementation:
+
+```ts
+{ provide: PAYMENT_GATEWAY, useClass: MockPaymentGateway }  // swap for a real gateway here
+```
+
+### SOLID applied
+
+| Principle | How it is applied |
+|---|---|
+| **S**ingle Responsibility | Payment logic moved out of `AppointmentsService` into its own module. The service handles booking rules only. |
+| **O**pen/Closed | Replacing the mock gateway with a real one means adding a new class that implements `IPaymentGateway`. `AppointmentsService` is not edited. |
+| **L**iskov Substitution | Any `IPaymentGateway` implementation (mock or real) can be used without changing the service's behavior. |
+| **I**nterface Segregation | The bloated repository interface (it mixed several concerns) is being split into smaller, focused interfaces. |
+| **D**ependency Inversion | High-level business logic depends on interfaces (`IAppointmentsRepository`, `IPaymentGateway`), injected via NestJS DI tokens. |
+
+Further benefits: services can be unit tested with fake repositories, and the database access method can change without touching business logic.
 
 ---
 
@@ -20,37 +76,39 @@ Problems covered:
 
 ### 1. Concurrency: transaction vs. row lock
 
-**Problem:** `bookSlotNaive` ran `UPDATE ... SET status='booked'` with no transaction, no lock and no availability check. Under 150 VUs on one slot, several patients "successfully" booked it, and each got a ticket.
+**Problem:** `bookSlotNaive` ran `UPDATE ... SET status='booked'` with no transaction, lock or availability check. Under 150 VUs on one slot, several patients "successfully" booked it and each got a ticket.
 
-**Misconception corrected:** A transaction does not lock rows. It only guarantees that all operations succeed or none do (atomicity). Preventing two requests from claiming the same row needs pessimistic locking (`SELECT ... FOR UPDATE`).
+**Misconception corrected:** A transaction does not lock rows. It guarantees atomicity (all operations succeed or none do). Preventing two requests from claiming the same row needs pessimistic locking (`SELECT ... FOR UPDATE`).
 
-**Rule:** `FOR UPDATE` must run inside the `BEGIN ... COMMIT` block. Outside one, the lock is released as soon as the statement ends.
+**Rule:** `FOR UPDATE` must run inside `BEGIN ... COMMIT`. Outside a transaction, the lock is released when the statement ends.
 
-**Steps tested (k6 contention test after each):**
-
-| Step | Change | Result |
+| Step | Change | k6 contention result |
 |---|---|---|
 | Naive | No transaction, no lock, no check | Multiple patients claimed one slot |
 | 1 | `BEGIN/COMMIT` only (`findSlotById`) | Race still possible |
 | 2 | `BEGIN/COMMIT` + `FOR UPDATE` (`findSlotByIdForUpdate`) | Only one patient books the slot |
 
-**Priority:** The slot update and ticket creation (`patient_tickets`) happen in one atomic transaction. If either fails, both roll back.
+**Priority:** consistency. The slot update and ticket creation succeed or fail together.
 
-### 2. Idempotency keys
+### 2. Pessimistic vs. optimistic locking
 
-**Problem:** Even with locking, a dropped response makes the client retry. The retry sees the slot as booked and returns `409 Conflict`, even though the first request succeeded. A double tap causes the same issue.
+Optimistic locking suits workloads where conflicts are rare. Here, many users compete for the same slot, so conflicts are expected. Row-level locking is the better fit than version checks and retries.
 
-**Decision:** The client sends an `Idempotency-Key` header. The server stores it in `idempotency_keys` with a status:
+### 3. Idempotency keys
+
+**Problem:** Even with locking, a dropped response makes the client retry. The retry sees a booked slot and returns `409`, though the first request succeeded. A double tap does the same.
+
+**Decision:** The client sends an `Idempotency-Key` header. The server stores it in `idempotency_keys`:
 
 - `processing`: registered when the request starts
-- `completed`: set on success, with the response saved
+- `completed`: set on success, response saved
 - `failed`: set on error
 
-A duplicate request with the same key returns the saved response instead of re-running the booking.
+A repeated key returns the saved response and does not run the booking again.
 
-### 3. Indexes
+### 4. Indexes
 
-Query analyzed: available slots for a doctor, at a branch, on a date.
+Query: available slots for a doctor, at a branch, on a date.
 
 ```sql
 CREATE INDEX IF NOT EXISTS idx_doctor_schedules_branch_doc_date
@@ -62,38 +120,32 @@ ON appointment_slots (schedule_id, status, start_time);
 
 | | Before | After |
 |---|---|---|
-| Scan type | Seq Scan on `appointment_slots` (48,000 rows) | Index Scan |
+| Scan | Seq Scan on `appointment_slots` (48,000 rows) | Index Scan |
 | Join | Hash Join | Nested Loop |
 | Execution time | 14.410 ms | 0.300 ms (~48x faster) |
 | Planning time | 0.490 ms | 3.159 ms |
 
-**Trade-offs:** reads are faster, writes are slower (index maintenance), and the B+ trees use extra storage.
+**Trade-offs:** faster reads, slower writes (index maintenance), extra storage for the B+ trees.
 
-### 4. Connection pooling
+### 5. Connection pooling
 
-**Why:** Without a pool, each query pays for a TCP handshake and a new Postgres process. A pool keeps connections open and reuses them.
+Without a pool, each query pays for a TCP handshake and a new Postgres process. A pool keeps connections open and reuses them.
 
-**Setup:** 150 VUs, 10 ms sleep, 30 s per run.
+Setup: 150 VUs, 10 ms sleep, 30 s per run.
 
-- **Pools 3 / 13 / 23 / 33 (same database state):** throughput, average latency and total requests improved, and P95 dropped sharply. Successful bookings fell and conflicts rose, because more concurrent requests raced for randomly chosen slots.
-- **Pools 5 / 15 / 25 (fresh database each run):** 5 to 15 gave a large throughput gain, lower average latency and lower P95. 15 to 25 gave very little.
+- **Pools 3 / 13 / 23 / 33 (same database state):** throughput, average latency and total requests improved, and P95 dropped sharply. Successful bookings fell and conflicts rose, because more concurrent requests raced for random slots.
+- **Pools 5 / 15 / 25 (fresh database each run):** 5 → 15 gave a large throughput gain with lower average latency and P95. 15 → 25 gave very little.
 
-**Decision:** Pool size **15** for this hardware. Larger pools need more CPU (vertical scaling).
+**Decision:** pool size **15** for this hardware. A larger pool needs more CPU (vertical scaling).
 
-### 5. Caching (Redis)
+### 6. Caching (Redis)
 
-- Cache data that is mostly static: branch list and doctors per branch (`cache:branches:all`, `cache:branch:{id}:doctors`, TTL 60 s).
-- Do not cache data that changes frequently: `appointment_slots` always hits the database.
+- Cached: branch list and doctors per branch (`cache:branches:all`, `cache:branch:{id}:doctors`, TTL 60 s). They rarely change.
+- Not cached: `appointment_slots`. It changes constantly and stale data would cause wrong availability.
 
-Check cached keys:
+### 7. N+1 queries (admin endpoints)
 
-```bash
-docker exec -it delta_redis redis-cli keys "*"
-```
-
-### 6. N+1 queries (admin endpoints)
-
-Naive version: 1 query for the list, then 1 query per row. Optimized version: a single `JOIN`.
+Naive: 1 query for the list, then 1 query per row. Optimized: a single `JOIN`.
 
 | Case | N+1 | Optimized | Reduction |
 |---|---|---|---|
@@ -102,34 +154,72 @@ Naive version: 1 query for the list, then 1 query per row. Optimized version: a 
 
 The gap grows with data size.
 
-### 7. Payment flow (in progress)
+### 8. Technology choices
 
-A separate payment gateway service is being built in its own repository and connected through inter-service communication. This keeps the payment logic isolated and lets it be studied on its own. A mock gateway with **85% random success** and simulated delays and failures is used for now.
+- **PostgreSQL** (not SQLite or MongoDB): the data is highly relational (patients, doctors, branches, schedules, slots, tickets, payments). Postgres provides JOINs, transactions, row-level locking and query planning tools. SQLite has limited concurrent writes. MongoDB uses a different data model that does not fit the learning goals.
+- **N-tier architecture:** separates HTTP, business logic and data access, so each is easier to maintain, test and replace.
 
-Booking flow with reservation:
+### 9. Payment flow and slot reservation
 
-1. Check the slot.
-2. If the slot is reserved and the 2-minute reservation has not expired, reject the request.
-3. If the reservation has expired, clear it and make the slot available again.
-4. Otherwise reserve the slot for 2 minutes.
-5. Run the payment.
-6. Payment succeeds: slot becomes `booked`. Payment fails: slot is cleared and becomes `available`.
+A mock payment gateway (85% random success, simulated delays and failures) stands in for a real one. It sits behind `IPaymentGateway`.
 
-### 8. Planned
+**First version (rejected).** Payment ran inside the database transaction:
 
-- Repository interfaces, with a write-up of why they are needed, why this structure was chosen, the future benefits, and a check for SOLID gaps.
-- Patient-side booking history (a patient can see which slots they booked).
-- Select-doctor-only booking, where the system picks any free slot.
+1. Violated SRP: `bookAppointment` did too much.
+2. Violated OCP: switching to a real gateway meant editing the core booking method.
+3. Violated ISP: the appointments interface was bloated.
+4. The transaction held a pooled connection for the whole payment call.
+5. The slot stayed locked or reserved while waiting, so real users saw it as unavailable.
+
+**Current flow.** Payment happens outside the transaction:
+
+1. `BEGIN`: lock the slot (`FOR UPDATE`). If it is reserved and expired, clean it (`findAndCleanExpiredSlot`).
+2. If the slot is available, set `status = reserved` with a 2-minute expiry. `COMMIT` and release the connection.
+3. Call the payment gateway through `IPaymentGateway`.
+4. **Success:** in a new transaction, set the slot to `booked`, clear the expiry, create the ticket and payment record.
+5. **Failure:** set the slot back to `available`.
+
+If the slot is reserved and not yet expired, the request is rejected.
+
+**Fix:** ticket creation used to happen before the booking was confirmed. It now runs after confirmation, so a failed booking never leaves a ticket or payment record.
+
+**Known flaw:** expired reservations are only cleaned when a patient explicitly tries that slot. If the gateway never responds, the slot keeps showing as reserved in listings until then.
+
+**Out of scope (lab project):** refunds when the gateway responds after the reservation has expired.
+
+### 10. Observability
+
+The app exposes Prometheus metrics via `prom-client`:
+
+```bash
+curl -i http://localhost:13000/metrics
+```
+
+---
+
+## Scalability and Future Work
+
+If this became a production system:
+
+- Background job to release expired reservations (removes the flaw above)
+- Real payment gateway implementing `IPaymentGateway`, with webhooks for async confirmation
+- Refund handling for payments that complete after a reservation expires
+- Split the bloated repository interface fully (ISP)
+- Patient booking history endpoint
+- "Select doctor only" booking, where the system picks any free slot
+- Automated unit, integration and e2e tests
+- Read replicas and a larger pool on bigger hardware
+- Rate limiting and authentication
 
 ---
 
 ## Domain Model
 
-A clinic has multiple branches. Doctors are assigned to branches (`doctor_branch_assignments`). Each doctor has a schedule per date (`doctor_schedules`) split into 10-minute slots (`appointment_slots`). A patient books a `slotId`, which updates the slot and creates a `patient_tickets` row.
+A clinic has multiple branches. Doctors are assigned to branches (`doctor_branch_assignments`). Each doctor has a schedule per date (`doctor_schedules`), split into 10-minute slots (`appointment_slots`). A patient books a `slotId`, which updates the slot and creates a `patient_tickets` row.
 
-Tables (9): branches, doctors, doctor_branch_assignments, patients, doctor_schedules, appointment_slots, patient_tickets, booking_attempts, idempotency_keys.
+Tables: `branches`, `doctors`, `doctor_branch_assignments`, `patients`, `doctor_schedules`, `appointment_slots`, `patient_tickets`, `booking_attempts`, `idempotency_keys`.
 
-Seed data: 10 branches, 200 doctors, 5,000 patients, 48,000+ available slots across 10 days.
+Seed data: 10 branches, 200 doctors, 5,000 patients, 48,000+ available slots over 10 days.
 
 ## Tech Stack
 
@@ -141,11 +231,10 @@ NestJS 10, TypeScript 5, Node.js, PostgreSQL 15 (`pg`), Redis 7 (`ioredis`), cla
 src/
   main.ts                 # bootstrap, global ValidationPipe (whitelist, transform)
   app.module.ts
-  appointments/           # booking core (controller, service, repository, dto)
+  appointments/           # booking core (controller, service, repository, interfaces, dto)
+  payments/               # IPaymentGateway + mock implementation
   branches/               # branches, doctors, slot lookup (Redis cached lists)
   admin/                  # N+1 vs optimized endpoints
-    naive_implementation/
-    updated_implementation/
   database/               # database.service.ts (pg.Pool), schema.sql, seed.ts, migrations/
   redis/                  # redis.service.ts, redis.module.ts
 k6/
@@ -153,6 +242,8 @@ k6/
   throughput-test.js      # 150 VUs, 30 s
 docker-compose.yml
 ```
+
+---
 
 ## Setup
 
@@ -162,7 +253,7 @@ Node.js, npm, Docker, Docker Compose, k6.
 
 ### Environment
 
-Copy `.env.example` to `.env` and set:
+Copy `.env.example` to `.env`:
 
 ```
 PORT=13000
@@ -185,7 +276,7 @@ npm run seed              # truncates and repopulates data
 npm run start:dev
 ```
 
-Reset everything:
+Full reset:
 
 ```bash
 docker compose down -v
@@ -209,7 +300,7 @@ docker exec -it delta_postgres_baseline psql -U postgres -d delta_diagnostic
 
 ## Migrations
 
-Put SQL files in `src/database/migrations/` with a descriptive name, for example `migration_v2_payments.sql`. Apply with:
+Put SQL files in `src/database/migrations/` with a descriptive name, for example `migration_v2_payments.sql`. Apply:
 
 ```bash
 docker exec -i delta_postgres_baseline psql -U postgres -d delta_diagnostic < src/database/migrations/migration_v2_payments.sql
@@ -227,6 +318,7 @@ docker exec -i delta_postgres_baseline psql -U postgres -d delta_diagnostic < sr
 | GET | `/admin/branches/:branchId/doctors-optimized` | Single JOIN version |
 | GET | `/admin/branches/:branchId/bookings-n-plus-one?date=` | N+1 version |
 | GET | `/admin/branches/:branchId/bookings-optimized?date=` | Single JOIN version |
+| GET | `/metrics` | Prometheus metrics |
 
 `POST /appointments/book` body:
 
@@ -235,6 +327,8 @@ docker exec -i delta_postgres_baseline psql -U postgres -d delta_diagnostic < sr
 ```
 
 Optional header: `Idempotency-Key: <unique-key>`
+
+---
 
 ## Testing
 
@@ -249,11 +343,11 @@ curl -X POST http://localhost:13000/appointments/book \
   -d '{"slotId": 1, "patientId": 10, "testRunId": "manual-test-1"}'
 ```
 
-Repeating the second request with the same key should return the saved response, not a conflict.
+Repeating the second request with the same key returns the saved response, not a conflict.
 
 ### Concurrency test (k6)
 
-1. Pick an empty slot id from `appointment_slots` (example below uses `4`).
+1. Pick an available slot id from `appointment_slots` (example: `4`).
 2. From the project root:
 
 ```bash
@@ -261,7 +355,7 @@ k6 run ./k6/contention-test.js
 k6 run ./k6/throughput-test.js
 ```
 
-3. Count successful attempts for the slot:
+3. Count successful attempts:
 
 ```sql
 SELECT slot_id, COUNT(*) AS total_success_attempts
@@ -270,7 +364,7 @@ WHERE slot_id = 4 AND test_run_id = 'run-contention-baseline' AND attempt_status
 GROUP BY slot_id;
 ```
 
-4. See who claimed it:
+4. See who claimed the slot:
 
 ```sql
 SELECT ba.slot_id, ba.patient_id, p.full_name, ba.created_at
@@ -279,9 +373,9 @@ JOIN patients p ON ba.patient_id = p.id
 WHERE ba.slot_id = 4 AND ba.test_run_id = 'run-contention-baseline' AND ba.attempt_status = 'success';
 ```
 
-**Expected:** naive and transaction-only versions show multiple patients on one slot. Transaction + `FOR UPDATE` shows exactly one.
+**Expected:** the naive and transaction-only versions show multiple patients on one slot. Transaction + `FOR UPDATE` shows exactly one.
 
-To switch between versions, change this line in `appointments.service.ts`:
+To reproduce the earlier versions, change the lookup in `appointments.service.ts`:
 
 ```ts
 // transaction only
@@ -293,7 +387,7 @@ const slot = await this.appointmentsRepo.findSlotByIdForUpdate(client, slotId);
 
 ### Index test
 
-Run the slot lookup with and without the two indexes:
+Run with and without the two indexes:
 
 ```sql
 EXPLAIN ANALYZE
@@ -326,10 +420,19 @@ The logger reports `totalQueriesExecuted` and `executionTimeMs`.
 docker exec -it delta_redis redis-cli keys "*"
 ```
 
+### Payment flow check
+
+Book a slot several times with different patients. About 85% of payments succeed. On failure, the slot returns to `available`. On success, it becomes `booked` with a null expiry, and a ticket exists. Check:
+
+```sql
+SELECT id, status, reservation_expires_at FROM appointment_slots WHERE id = 1;
+```
+
+(Adjust the column name to match your schema.)
+
 ## Known Issues
 
-- Port values differ across files: k6 scripts hardcode `7333`, some docs use `3000`. Align them with `PORT`.
-- `prometheus.yml` is empty.
+- k6 scripts hardcode port `7333`. Align them with `PORT` (`13000`).
+- Expired reservations are cleaned lazily, only when a patient tries that slot.
+- No refund handling for late gateway responses.
 - No automated tests yet.
-- `tree_output.txt` is a broken output file and can be deleted.
-- The `naive_implementation/` and `updated_implementation/` folders hold `.txt` files, which should become real code or docs.

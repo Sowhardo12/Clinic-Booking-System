@@ -320,3 +320,13 @@ the slot is reserved with the expiration time, and then the payment info is sent
 solved:
 1. The payment is taken to a seperate module, and implemented in the Appointment Service through abstraction (interface), now the OCP is solved, and SRP is somehow solved, the Appointment Service does only its needed to do. Payment is seperated
 2. When available slot is found, slot is reserved with expiration and then the commit happens. now payment either returns failure or success. if failure, then the slot is released and made available. if success then the slot is marked booked with null expiration. We are also keeping the clean findAndCleanExpiredSlot when trying a slot for availibility, becuase in case, if due to network delay the response does not come from the payment service, then the slot is expired but reserved. unless the patient explicitly click the slot (only then the clean method will be called) the slot will show reserved. Its a flaw: will be fixed in the future
+
+out of scope: as we are using mock payment, we will not handle refund on final booking failure due to delay in response from payment gateway meanwhile the reserved slot is expired. 
+
+
+need to talk about future scalability and future works of this project 
+(bring real payment system, bring refund system) if it were to be a real system but its a lab.
+
+some problems solved:
+
+ticket generation was happening bfore the confirm booking, so swaped their step position. If the final booking fails, there should not be any tickits or payment record recorded.
