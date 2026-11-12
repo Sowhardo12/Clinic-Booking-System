@@ -18,7 +18,7 @@ export class RequestLoggerMiddleware implements NestMiddleware {
       const duration = Date.now() - startTime;
       const { statusCode } = res;
 
-      // Structured JSON Log format for production observability
+
       const logPayload = {
         timestamp: new Date().toISOString(),
         requestId,

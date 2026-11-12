@@ -22,7 +22,7 @@ export class AppointmentsService {
       }
     }
 
-    // --- PHASE 1: Fast Transaction to Secure Temporary Hold (Connection Released Immediately) ---
+
     const client = await this.appointmentsRepo.getClient();
     let reservedSlot:any;
     try {
@@ -46,7 +46,7 @@ export class AppointmentsService {
         throw new ConflictException('Slot is currently booked or reserved by another patient.');
       }
 
-      // Reserve slot for 2 minutes
+
       reservedSlot = await this.appointmentsRepo.reserveSlot(client, slotId, patientId, 2);
       if (!reservedSlot) {
         throw new ConflictException('Failed to reserve appointment slot.');
@@ -56,20 +56,20 @@ export class AppointmentsService {
       await client.query('ROLLBACK').catch(() => {});
       throw err;
     } finally {
-      client.release(); // DB Connection returned immediately to pool!
+      client.release();
     }
 
-    // --- PHASE 2: External Payment Gateway Call (No DB Connection Held) ---
+
     const consultationFee = 500.00;
     const paymentResult = await this.paymentGateway.processPayment(consultationFee, patientId, slotId);
 
-    // --- PHASE 3: Finalize Booking State in a New Short Transaction ---
+
     const finalClient = await this.appointmentsRepo.getClient();
     try {
       await finalClient.query('BEGIN');
 
       if (!paymentResult.success) {
-        // Payment Failed: Revert slot status back to 'available'
+
         await this.appointmentsRepo.recordPayment(finalClient, slotId, patientId, 'failed', paymentResult.transactionId);
         await this.appointmentsRepo.releaseSlot(finalClient, slotId, patientId);
         this.metricsService.bookingAttemptsTotal.inc({ status: 'failed_payment' });
@@ -81,9 +81,6 @@ export class AppointmentsService {
           error: paymentResult.errorMessage,
         });
       }
-
-      // Payment Success: Confirm booking and issue ticket
-
       const bookedSlot = await this.appointmentsRepo.confirmBooking(finalClient, slotId, patientId);
       if (!bookedSlot) {
         throw new ConflictException('Failed to finally book appointment slot. already booked by someone else');

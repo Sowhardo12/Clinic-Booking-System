@@ -4,8 +4,6 @@ import { DatabaseService } from '../database/database.service';
 @Injectable()
 export class AdminRepository {
   constructor(private db: DatabaseService) {}
-
-  // Step 1 of N+1: Get just the doctor IDs assigned to a branch
   async getDoctorIdsByBranch(branchId: number) {
     const res = await this.db.query(
       'SELECT doctor_id FROM doctor_branch_assignments WHERE branch_id = $1',
@@ -14,7 +12,6 @@ export class AdminRepository {
     return res.rows.map((row) => row.doctor_id);
   }
 
-  // Step 2 of N+1: Query individual doctor details in a loop
   async getDoctorById(doctorId: number) {
     const res = await this.db.query(
       'SELECT * FROM doctors WHERE id = $1',
@@ -23,7 +20,6 @@ export class AdminRepository {
     return res.rows[0];
   }
 
-  // Optimized version: Single relational JOIN query
   async getDoctorsOptimized(branchId: number) {
     const res = await this.db.query(
       `SELECT d.id, d.full_name, d.specialty, d.is_active
@@ -34,8 +30,7 @@ export class AdminRepository {
     );
     return res.rows;
   }
-  // --- N+1 Version ---
-    // Step 1: Get all slot IDs booked for a specific branch and date
+
     async getBookedSlotIdsByBranchAndDate(branchId: number, date: string) {
       const res = await this.db.query(
         `SELECT s.id AS slot_id
@@ -47,7 +42,6 @@ export class AdminRepository {
       return res.rows.map((row) => row.slot_id);
     }
 
-    // Step 2: Loop query to fetch ticket and patient info per slot ID
     async getBookingDetailsBySlotId(slotId: number) {
       const res = await this.db.query(
         `SELECT pt.id AS ticket_id, pt.issued_at, p.id AS patient_id, p.full_name, p.phone, s.start_time, s.end_time, d.full_name AS doctor_name
@@ -62,8 +56,6 @@ export class AdminRepository {
       return res.rows[0];
     }
 
-    // --- Optimized Version ---
-    // Single query using relational JOINs across branches, schedules, slots, tickets, and patients
     async getBookingsOptimized(branchId: number, date: string) {
       const res = await this.db.query(
         `SELECT pt.id AS ticket_id, pt.issued_at, p.id AS patient_id, p.full_name, p.phone, s.start_time, s.end_time, d.full_name AS doctor_name

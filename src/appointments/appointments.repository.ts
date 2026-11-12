@@ -10,16 +10,16 @@ export class AppointmentsRepository {
     return this.db.getClient();
   }
 
-  // uses the transaction client if given, else the normal pool
+
   private run(sql: string, params: any[], client?: PoolClient) {
     return client ? client.query(sql, params) : this.db.query(sql, params);
   }
-  //without locking
+
   async findSlotById(slotId: number, client?: PoolClient) {
     const r = await this.run('SELECT * FROM appointment_slots WHERE id = $1', [slotId], client);
     return r.rows[0];
   }
-  //with locking : using FOR UPDATE
+
   async findSlotByIdForUpdate(client: PoolClient, slotId: number) {
     const r = await client.query('SELECT * FROM appointment_slots WHERE id = $1 FOR UPDATE', [slotId]);
     return r.rows[0];
@@ -79,7 +79,7 @@ export class AppointmentsRepository {
         client,
       );
   }
-  // Find slot and auto-release if previous reservation expired
+
     async findAndCleanExpiredSlot(client: PoolClient, slotId: number) {
       const r = await client.query(
         `SELECT * FROM appointment_slots WHERE id = $1 FOR UPDATE`,
@@ -87,7 +87,7 @@ export class AppointmentsRepository {
       );
       const slot = r.rows[0];
 
-      // If reserved and reservation time has passed, auto-release it back to available
+
       if (slot && slot.status === 'reserved' && slot.reserved_until && new Date() > new Date(slot.reserved_until)) {
         await client.query(
           `UPDATE appointment_slots SET status = 'available', patient_id = NULL, reserved_until = NULL WHERE id = $1`,
@@ -100,7 +100,7 @@ export class AppointmentsRepository {
       return slot;
     }
 
-    // Temporarily hold slot for payment
+
     async reserveSlot(client: PoolClient, slotId: number, patientId: number, holdMinutes: number = 2) {
       const r = await client.query(
         `UPDATE appointment_slots
@@ -112,7 +112,7 @@ export class AppointmentsRepository {
       return r.rows[0];
     }
 
-    // Confirm booking upon successful payment
+
     async confirmBooking(client: PoolClient, slotId: number, patientId: number) {
       const r = await client.query(
         `UPDATE appointment_slots
@@ -125,7 +125,7 @@ export class AppointmentsRepository {
       return r.rows[0];
     }
 
-    // Release slot back to available upon payment failure
+
     async releaseSlot(client: PoolClient, slotId: number, patientId: number) {
       await client.query(
         `UPDATE appointment_slots
@@ -135,7 +135,7 @@ export class AppointmentsRepository {
       );
     }
 
-    // Record payment attempt
+
     async recordPayment(client: PoolClient, slotId: number, patientId: number, status: string, txnId: string) {
       const r = await client.query(
         `INSERT INTO payments (slot_id, patient_id, payment_status, transaction_id) VALUES ($1, $2, $3, $4) RETURNING *`,
@@ -143,7 +143,7 @@ export class AppointmentsRepository {
       );
       return r.rows[0];
   }
-  // Check if patient already booked or reserved this specific slot
+
     async findActiveBookingByPatientAndSlot(client: PoolClient, slotId: number, patientId: number) {
       const r = await client.query(
         `SELECT * FROM appointment_slots WHERE id = $1 AND patient_id = $2 AND status IN ('booked', 'reserved')`,
